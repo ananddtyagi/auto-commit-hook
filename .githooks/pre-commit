@@ -2,42 +2,49 @@
 
 # Pre-commit hook to squash [auto-commit-hook] commits
 
-# Get the current branch
-current_branch=$(git rev-parse --abbrev-ref HEAD)
-
-# Find the most recent non-auto-commit
-last_manual_commit=$(git log --format="%H %s" | grep -v "\[auto-commit-hook\]" | head -1 | cut -d' ' -f1)
-
-# Count auto-commits since last manual commit
-auto_commit_count=$(git log ${last_manual_commit}..HEAD --format="%s" | grep -c "\[auto-commit-hook\]")
-
-if [ "$auto_commit_count" -gt 0 ]; then
-    echo "Found $auto_commit_count auto-commits to squash..."
+# Check if there are any staged changes
+if ! git diff --cached --quiet; then
+    # Find the most recent non-auto-commit
+    last_manual_commit=$(git log --format="%H %s" | grep -v "\[auto-commit-hook\]" | head -1 | cut -d' ' -f1)
     
-    # Get list of all changed files in auto-commits
-    changed_files=$(git diff --name-only ${last_manual_commit}..HEAD | sort | uniq)
+    # Count auto-commits since last manual commit
+    if [ -n "$last_manual_commit" ]; then
+        auto_commit_count=$(git log ${last_manual_commit}..HEAD --format="%s" | grep -c "\[auto-commit-hook\]" || echo "0")
+    else
+        # No manual commits yet, count all auto-commits
+        auto_commit_count=$(git log --format="%s" | grep -c "\[auto-commit-hook\]" || echo "0")
+    fi
     
-    # Create a summary of changes
-    changes_summary=$(echo "$changed_files" | wc -l | tr -d ' ')
-    
-    # Get the original commit message (staged)
-    original_message=$(git log --format=%B -n 1 --no-commit-id HEAD)
-    
-    # Reset to last manual commit, keeping changes
-    git reset --soft ${last_manual_commit}
-    
-    # Create new commit with enhanced message
-    commit_message="${original_message}
-
-Auto-commits squashed: ${auto_commit_count} commits affecting ${changes_summary} files
-Files changed:
-$(echo "$changed_files" | sed 's/^/  - /')"
-    
-    git commit -m "$commit_message"
-    
-    echo "Successfully squashed auto-commits!"
-    exit 0
+    if [ "$auto_commit_count" -gt 0 ]; then
+        echo "Found $auto_commit_count auto-commit(s) to squash..."
+        
+        # Stash the currently staged changes
+        git stash push -q --keep-index -m "pre-commit-hook-stash"
+        
+        # Get list of all changed files in auto-commits
+        if [ -n "$last_manual_commit" ]; then
+            changed_files=$(git diff --name-only ${last_manual_commit}..HEAD | sort | uniq)
+        else
+            changed_files=$(git ls-tree -r HEAD --name-only | sort | uniq)
+        fi
+        
+        # Create a summary of changes
+        file_count=$(echo "$changed_files" | grep -v "^$" | wc -l | tr -d ' ')
+        
+        # Reset to last manual commit (or initial commit if no manual commits)
+        if [ -n "$last_manual_commit" ]; then
+            git reset --soft ${last_manual_commit}
+        else
+            # If no manual commits, reset to root
+            git update-ref -d HEAD
+        fi
+        
+        # Re-apply the stashed changes
+        git stash pop -q
+        
+        echo "Auto-commits squashed! All changes from $auto_commit_count Claude Code interactions are now staged."
+    fi
 fi
 
-# If no auto-commits, proceed normally
+# Continue with normal commit
 exit 0
