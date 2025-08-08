@@ -1,6 +1,6 @@
-# Claude Code Example
+# Claude Code Auto Commit Hook
 
-A sample project demonstrating Claude Code configuration with custom hooks and settings.
+This hook automatically commits everytime Claude Code makes an edit, allowing for easier change tracing and rollback.
 
 ## Setup
 
