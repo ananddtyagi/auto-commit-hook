@@ -1,60 +1,52 @@
 #!/bin/bash
 
-# Auto-commit hook for Claude Code
-# This script automatically commits changes when Claude Code modifies files
+# Auto-commit hook for Claude Code - runs after assistant response
+# This creates a single commit after Claude Code finishes all operations
 
-# Read input from stdin
-INPUT=$(cat)
-
-# Parse the JSON input to extract information
-HOOK_EVENT=$(echo "$INPUT" | grep -o '"hook_event_name":"[^"]*"' | sed 's/"hook_event_name":"\([^"]*\)"/\1/')
-TOOL_NAME=$(echo "$INPUT" | grep -o '"tool_name":"[^"]*"' | sed 's/"tool_name":"\([^"]*\)"/\1/')
-
-# Only proceed for PostToolUse events
-if [ "$HOOK_EVENT" != "PostToolUse" ]; then
+# Check if we're in a git repository
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+    echo "Not in a git repository, skipping commit" >&2
     exit 0
 fi
 
-# Only commit for file modification tools
-case "$TOOL_NAME" in
-    Write|Edit|MultiEdit|NotebookEdit)
-        # Extract file path from tool input
-        FILE_PATH=$(echo "$INPUT" | grep -o '"file_path":"[^"]*"' | sed 's/"file_path":"\([^"]*\)"/\1/')
+# Check if there are changes to commit
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    # Get list of modified files
+    MODIFIED_FILES=$(git status --porcelain | grep -E "^[ M]M|^A|^[ ?]?" | awk '{print $2}' | sort | uniq)
+    FILE_COUNT=$(echo "$MODIFIED_FILES" | grep -v "^$" | wc -l | tr -d ' ')
+    
+    if [ "$FILE_COUNT" -gt 0 ]; then
+        # Stage all changes
+        git add -A
         
-        # Check if we're in a git repository
-        if ! git rev-parse --git-dir > /dev/null 2>&1; then
-            echo "Not in a git repository, skipping commit" >&2
-            exit 0
+        # Get first 5 files for commit message (or all if less than 5)
+        if [ "$FILE_COUNT" -le 5 ]; then
+            FILE_LIST=$(echo "$MODIFIED_FILES" | sed 's/^/  - /')
+        else
+            FILE_LIST=$(echo "$MODIFIED_FILES" | head -5 | sed 's/^/  - /')
+            FILE_LIST="$FILE_LIST
+  ... and $((FILE_COUNT - 5)) more files"
         fi
         
-        # Get the relative file path
-        if [ -n "$FILE_PATH" ]; then
-            RELATIVE_PATH=$(realpath --relative-to="$(git rev-parse --show-toplevel)" "$FILE_PATH" 2>/dev/null || echo "$FILE_PATH")
-            
-            # Stage the specific file
-            git add "$FILE_PATH" 2>/dev/null
-            
-            # Create commit message
-            COMMIT_MSG="Auto-commit: Claude Code modified $RELATIVE_PATH
+        # Create a descriptive commit message
+        COMMIT_MSG="[auto-commit-hook] Changes from Claude Code interaction
 
-Tool: $TOOL_NAME
-Timestamp: $(date)
-
-This commit was automatically created by a Claude Code hook
-to allow easy reversion of changes if needed."
-            
-            # Make the commit
-            git commit -m "$COMMIT_MSG" > /dev/null 2>&1
-            
-            if [ $? -eq 0 ]; then
-                echo "Successfully created auto-commit for $RELATIVE_PATH"
-            fi
+Modified $FILE_COUNT file(s):
+$FILE_LIST"
+        
+        # Make the commit
+        git commit -m "$COMMIT_MSG" > /dev/null 2>&1
+        
+        if [ $? -eq 0 ]; then
+            echo "Successfully created auto-commit for $FILE_COUNT file(s)"
+            COMMIT_HASH=$(git rev-parse --short HEAD)
+            echo "Commit: $COMMIT_HASH"
+        else
+            echo "Failed to create auto-commit" >&2
         fi
-        ;;
-    *)
-        # Not a file modification tool, skip
-        exit 0
-        ;;
-esac
+    fi
+else
+    echo "No changes to commit"
+fi
 
 exit 0
