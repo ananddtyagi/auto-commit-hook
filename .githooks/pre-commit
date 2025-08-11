@@ -1,5 +1,14 @@
 #!/bin/bash
+# --- START: Added check for auto-commit message ---
+# The path to the file containing the commit message is passed as the first argument.
+COMMIT_MSG_FILE=$1
 
+# If the commit message being created contains the auto-commit tag, exit immediately.
+# This allows the auto-commit to proceed without triggering the squash.
+if grep -q "\[auto-commit-hook\]" "$COMMIT_MSG_FILE"; then
+    exit 0
+fi
+# --- END: Added check ---
 # Pre-commit hook to squash [auto-commit-hook] commits
 
 # Check if there are any staged changes
